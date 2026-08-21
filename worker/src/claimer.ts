@@ -34,9 +34,10 @@ export async function claimJob(
           AND j.status IN ('queued', 'scheduled')
           AND j.run_at <= NOW()
           AND q.status = 'active'
+          AND (SELECT COUNT(*) FROM jobs j2 WHERE j2.queue_id = q.id AND j2.status IN ('claimed', 'running')) < q.concurrency_limit
         ORDER BY j.priority DESC, j.run_at ASC
         LIMIT 1
-        FOR UPDATE OF j SKIP LOCKED
+        FOR UPDATE OF j, q SKIP LOCKED
       )
       UPDATE jobs
       SET
@@ -76,9 +77,10 @@ export async function claimNextJob(pool: Pool, workerId: string): Promise<Job | 
         WHERE j.status IN ('queued', 'scheduled')
           AND j.run_at <= NOW()
           AND q.status = 'active'
+          AND (SELECT COUNT(*) FROM jobs j2 WHERE j2.queue_id = q.id AND j2.status IN ('claimed', 'running')) < q.concurrency_limit
         ORDER BY j.priority DESC, j.run_at ASC
         LIMIT 1
-        FOR UPDATE OF j SKIP LOCKED
+        FOR UPDATE OF j, q SKIP LOCKED
       )
       UPDATE jobs
       SET

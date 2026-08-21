@@ -4,6 +4,10 @@ Base URL: `/api/v1`
 
 Authentication: Standard `Authorization: Bearer <JWT>` header required for all endpoints except `/auth/register` and `/auth/login`.
 
+Authorization: Authenticated resources are scoped to organizations where the user has a membership. Organization administration and queue/project writes require `admin` or `owner` membership. Resources outside the caller's organizations return `404`.
+
+Authentication rate limits: registration and login are limited to 10 requests per minute per client by the API's in-memory Fastify rate limiter.
+
 ## Authentication
 
 - `POST /auth/register` - Register a new user
@@ -25,6 +29,7 @@ Authentication: Standard `Authorization: Bearer <JWT>` header required for all e
 - `POST /queues/:id/pause` - Pause a queue (stops workers from claiming)
 - `POST /queues/:id/resume` - Resume a paused queue
 - `GET /queues/:id/stats` - Get queue health stats
+	The response includes `active` and `concurrency_limit` for current slot utilization.
 
 ## Jobs
 

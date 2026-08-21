@@ -1,4 +1,3 @@
-import React from 'react';
 import type { JobStatus, WorkerStatus, ExecutionStatus } from '@job-scheduler/shared';
 
 const STATUS_COLORS: Record<string, { color: string, bg: string }> = {

@@ -12,6 +12,7 @@ const authRoutes: FastifyPluginAsyncZod = async (fastify) => {
   fastify.post(
     '/register',
     {
+      config: { rateLimit: { max: 10, timeWindow: '1 minute' } },
       schema: {
         body: RegisterSchema,
       },
@@ -50,6 +51,7 @@ const authRoutes: FastifyPluginAsyncZod = async (fastify) => {
   fastify.post(
     '/login',
     {
+      config: { rateLimit: { max: 10, timeWindow: '1 minute' } },
       schema: {
         body: LoginSchema,
       },

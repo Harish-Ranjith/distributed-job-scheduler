@@ -1,4 +1,4 @@
-import React from 'react';
+import type { ReactNode } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, NavLink } from 'react-router-dom';
 import { useAuth } from './hooks/useAuth.js';
 import { useWebSocket } from './hooks/useWebSocket.js';
@@ -13,7 +13,7 @@ import { QueueConfig } from './pages/QueueConfig.js';
 import { DeadLetter } from './pages/DeadLetter.js';
 import { Metrics } from './pages/Metrics.js';
 
-function ProtectedRoute({ children }: { children: React.ReactNode }) {
+function ProtectedRoute({ children }: { children: ReactNode }) {
   const { user, isLoading } = useAuth();
   
   if (isLoading) return <div style={{ padding: '2rem' }}>Loading...</div>;
@@ -22,7 +22,7 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
-function Layout({ children }: { children: React.ReactNode }) {
+function Layout({ children }: { children: ReactNode }) {
   useWebSocket();
   const wsConnected = useStore((state) => state.wsConnected);
   const { logout } = useAuth();

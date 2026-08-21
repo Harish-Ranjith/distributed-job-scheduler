@@ -5,7 +5,7 @@ const TEST_DB_URL = process.env.TEST_DATABASE_URL || 'postgres://postgres:postgr
 
 export const testPool = new Pool({
   connectionString: TEST_DB_URL,
-  ssl: { rejectUnauthorized: false },
+  ssl: TEST_DB_URL.includes('localhost') || TEST_DB_URL.includes('127.0.0.1') ? false : { rejectUnauthorized: false },
 });
 
 afterAll(async () => {

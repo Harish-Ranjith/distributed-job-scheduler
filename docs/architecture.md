@@ -9,10 +9,11 @@
 
 2. **API Service (Fastify + Zod)**
    - Exposes REST endpoints for CRUD operations on queues, jobs, and workers.
-   - Manages WebSocket connections for real-time dashboard updates by mapping PostgreSQL `pg_notify` payloads to connected clients.
+   - Manages tenant-scoped WebSocket connections for real-time dashboard updates by mapping PostgreSQL `pg_notify` payloads to clients whose organization memberships match the event.
    - Runs two critical background loops:
      - **Cron Scheduler (`services/scheduler.ts`)**: Ticks every 30s. Atomically spawns jobs from `scheduled_jobs` whose `next_run_at` has elapsed.
-     - **Stale Job Reaper (`services/reaper.ts`)**: Ticks every 60s. Detects workers that missed heartbeats, marks them offline, and atomically requeues their claimed/running jobs.
+   - **Stale Job Reaper (`services/reaper.ts`)**: Ticks every 30s by default. Detects workers that missed heartbeats, marks them offline, and atomically requeues their claimed/running jobs.
+   - API instances may scale horizontally. Each scheduler tick locks a due `scheduled_jobs` row in the same transaction that inserts its job instance and advances `next_run_at`, so multiple API instances cannot double-fire a schedule.
 
 3. **Worker Service (Node.js)**
    - Pulls jobs concurrently from the database using `SKIP LOCKED`.
@@ -25,6 +26,8 @@
    - Provides a glassmorphic, real-time UI.
    - Polls aggregated metrics every 10s.
    - Invalidates local React Query caches instantly upon receiving WebSocket events from the API.
+
+Workers can claim up to their configured concurrency, but every claim also locks the queue row while checking `concurrency_limit`. The worker pool's PostgreSQL pool has a maximum of 10 connections; setting worker concurrency higher than the pool does not create more database capacity and can cause claim/execution queries to queue under load.
 
 ## Data Flow: Job Lifecycle
 

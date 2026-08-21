@@ -35,9 +35,13 @@ if (!connectionString) {
   console.error('Use the direct (non-pooled) Neon connection string for migrations.');
   process.exit(1);
 }
+const resolvedConnectionString = connectionString as string;
 
 async function run() {
-  const client = new Client({ connectionString, ssl: { rejectUnauthorized: false } });
+  const client = new Client({
+    connectionString: resolvedConnectionString,
+    ssl: /localhost|127\.0\.0\.1/.test(resolvedConnectionString) ? false : { rejectUnauthorized: false },
+  });
 
   try {
     await client.connect();

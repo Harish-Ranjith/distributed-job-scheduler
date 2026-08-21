@@ -1,4 +1,3 @@
-import React from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../api/client.js';
 import type { MetricsSummary } from '@job-scheduler/shared';

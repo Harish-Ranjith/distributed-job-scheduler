@@ -30,3 +30,11 @@
 - Enforces boundaries (workers don't accidentally import Fastify routes).
 - Allows independent scaling and deployment of workers vs API.
 - Shares Zod schemas for end-to-end type safety between DB -> API -> Dashboard.
+
+## 6. Security Model and Trade-offs
+
+API access is tenant-scoped through organization membership. Resource ownership resolves through organization -> project -> queue -> job, and privileged membership changes require an admin or owner role. Requests for resources outside the caller's organizations return `404` to avoid organization-ID enumeration. Authentication endpoints use an in-memory Fastify rate limit of 10 requests per minute per client.
+
+WebSocket connections resolve the user's organization memberships at connection time. PostgreSQL job and worker notifications include the owning organization ID set, and the API only broadcasts an event to clients whose membership set contains one of those IDs. Membership changes require reconnecting the socket to refresh the cached membership set; only the data-free `reload` fallback is global.
+
+The scheduler is safe under multiple API instances because each due schedule row remains locked through insertion of the concrete job and advancement of `next_run_at`. Authorization adds database membership checks to resource requests; a larger deployment could cache non-privileged membership lookups, but privileged writes should continue to revalidate against PostgreSQL.

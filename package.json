@@ -15,7 +15,7 @@
     "dev:worker": "npm run dev --workspace=worker",
     "dev:dashboard": "npm run dev --workspace=dashboard",
     "build": "npm run build --workspaces --if-present",
-    "typecheck": "tsc --noEmit -p tsconfig.base.json && npm run typecheck --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present && tsc --noEmit -p migrations/tsconfig.json",
     "test": "vitest run --workspace vitest.workspace.ts",
     "test:watch": "vitest --workspace vitest.workspace.ts",
     "test:coverage": "vitest run --workspace vitest.workspace.ts --coverage",

@@ -14,10 +14,23 @@ import { computeNextRunAt } from '../services/scheduler.js';
 const jobsRoutes: FastifyPluginAsyncZod = async (fastify) => {
   const auth = { onRequest: [fastify.authenticate] };
   const idParam = z.object({ id: z.string().uuid() });
+  const userId = (request: { user: unknown }) => (request.user as { sub: string }).sub;
+
+  async function canAccessQueue(request: { user: unknown }, queueId: string): Promise<boolean> {
+    const { rows } = await pool.query(
+      `SELECT 1 FROM memberships m
+       JOIN projects p ON p.organization_id = m.organization_id
+       JOIN queues q ON q.project_id = p.id
+       WHERE m.user_id = $1 AND q.id = $2`,
+      [userId(request), queueId]
+    );
+    return Boolean(rows[0]);
+  }
 
   // ── Create: Immediate ─────────────────────────────────────────────────────
   fastify.post('/', { ...auth, schema: { body: CreateImmediateJobSchema } }, async (request, reply) => {
     const { queue_id, job_type, payload, priority, max_attempts, idempotency_key } = request.body;
+    if (!await canAccessQueue(request, queue_id)) return reply.code(404).send({ error: { code: 'NOT_FOUND', message: 'Queue not found' } });
     const { rows } = await pool.query(
       `INSERT INTO jobs (queue_id, job_type, payload, priority, max_attempts, idempotency_key)
        VALUES ($1, $2, $3, $4, $5, $6)
@@ -39,6 +52,7 @@ const jobsRoutes: FastifyPluginAsyncZod = async (fastify) => {
   // ── Create: Delayed ───────────────────────────────────────────────────────
   fastify.post('/delayed', { ...auth, schema: { body: CreateDelayedJobSchema } }, async (request, reply) => {
     const { queue_id, job_type, payload, priority, max_attempts, idempotency_key, delay_seconds } = request.body;
+    if (!await canAccessQueue(request, queue_id)) return reply.code(404).send({ error: { code: 'NOT_FOUND', message: 'Queue not found' } });
     const { rows } = await pool.query(
       `INSERT INTO jobs (queue_id, job_type, payload, priority, max_attempts, idempotency_key, status, run_at)
        VALUES ($1, $2, $3, $4, $5, $6, 'scheduled', NOW() + ($7 || ' seconds')::interval)
@@ -51,6 +65,7 @@ const jobsRoutes: FastifyPluginAsyncZod = async (fastify) => {
   // ── Create: Scheduled (explicit run_at) ───────────────────────────────────
   fastify.post('/scheduled', { ...auth, schema: { body: CreateScheduledJobSchema } }, async (request, reply) => {
     const { queue_id, job_type, payload, priority, max_attempts, idempotency_key, run_at } = request.body;
+    if (!await canAccessQueue(request, queue_id)) return reply.code(404).send({ error: { code: 'NOT_FOUND', message: 'Queue not found' } });
     const { rows } = await pool.query(
       `INSERT INTO jobs (queue_id, job_type, payload, priority, max_attempts, idempotency_key, status, run_at)
        VALUES ($1, $2, $3, $4, $5, $6, 'scheduled', $7)
@@ -63,6 +78,7 @@ const jobsRoutes: FastifyPluginAsyncZod = async (fastify) => {
   // ── Create: Cron ──────────────────────────────────────────────────────────
   fastify.post('/cron', { ...auth, schema: { body: CreateCronJobSchema } }, async (request, reply) => {
     const { queue_id, name, cron_expression, job_type, payload, priority, max_attempts } = request.body;
+    if (!await canAccessQueue(request, queue_id)) return reply.code(404).send({ error: { code: 'NOT_FOUND', message: 'Queue not found' } });
 
     const next_run_at = computeNextRunAt(cron_expression);
     if (!next_run_at) {
@@ -86,6 +102,9 @@ const jobsRoutes: FastifyPluginAsyncZod = async (fastify) => {
   // ── Create: Batch ─────────────────────────────────────────────────────────
   fastify.post('/batch', { ...auth, schema: { body: CreateBatchJobSchema } }, async (request, reply) => {
     const { jobs } = request.body;
+    for (const job of jobs) {
+      if (!await canAccessQueue(request, job.queue_id)) return reply.code(404).send({ error: { code: 'NOT_FOUND', message: 'Queue not found' } });
+    }
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
@@ -112,21 +131,21 @@ const jobsRoutes: FastifyPluginAsyncZod = async (fastify) => {
   fastify.get('/', { ...auth, schema: { querystring: JobFiltersSchema } }, async (request) => {
     const { status, queue_id, job_type, page, limit } = request.query;
     const offset = (page - 1) * limit;
-    const conditions: string[] = [];
-    const params: unknown[] = [];
+    const conditions: string[] = ['EXISTS (SELECT 1 FROM memberships m JOIN projects p ON p.organization_id = m.organization_id WHERE m.user_id = $1 AND p.id = q.project_id)'];
+    const params: unknown[] = [userId(request)];
 
-    if (status) { params.push(status); conditions.push(`status = $${params.length}`); }
-    if (queue_id) { params.push(queue_id); conditions.push(`queue_id = $${params.length}`); }
-    if (job_type) { params.push(`%${job_type}%`); conditions.push(`job_type ILIKE $${params.length}`); }
+    if (status) { params.push(status); conditions.push(`j.status = $${params.length}`); }
+    if (queue_id) { params.push(queue_id); conditions.push(`j.queue_id = $${params.length}`); }
+    if (job_type) { params.push(`%${job_type}%`); conditions.push(`j.job_type ILIKE $${params.length}`); }
 
     const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
 
     const [{ rows }, { rows: countRows }] = await Promise.all([
       pool.query(
-        `SELECT * FROM jobs ${where} ORDER BY created_at DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+        `SELECT j.* FROM jobs j JOIN queues q ON q.id = j.queue_id ${where} ORDER BY j.created_at DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
         [...params, limit, offset]
       ),
-      pool.query(`SELECT COUNT(*)::int as total FROM jobs ${where}`, params),
+      pool.query(`SELECT COUNT(*)::int as total FROM jobs j JOIN queues q ON q.id = j.queue_id ${where}`, params),
     ]);
 
     return {
@@ -141,7 +160,7 @@ const jobsRoutes: FastifyPluginAsyncZod = async (fastify) => {
   });
 
   // ── Get single job with executions + logs ─────────────────────────────────
-  fastify.get('/:id', { ...auth, schema: { params: idParam } }, async (request, reply) => {
+  fastify.get('/:id', { ...auth, onRequest: [fastify.authenticate, fastify.requireResourceAccess('job')], schema: { params: idParam } }, async (request, reply) => {
     const { id } = request.params;
 
     const [{ rows: jobRows }, { rows: execRows }, { rows: logRows }] = await Promise.all([
@@ -155,7 +174,7 @@ const jobsRoutes: FastifyPluginAsyncZod = async (fastify) => {
   });
 
   // ── Retry a failed job ────────────────────────────────────────────────────
-  fastify.post('/:id/retry', { ...auth, schema: { params: idParam } }, async (request, reply) => {
+  fastify.post('/:id/retry', { ...auth, onRequest: [fastify.authenticate, fastify.requireResourceAccess('job')], schema: { params: idParam } }, async (request, reply) => {
     const { id } = request.params;
     const { rows } = await pool.query(
       `UPDATE jobs SET status = 'queued', attempt_count = 0, run_at = NOW(), updated_at = NOW()
@@ -172,7 +191,7 @@ const jobsRoutes: FastifyPluginAsyncZod = async (fastify) => {
   });
 
   // ── Cancel / delete a queued job ──────────────────────────────────────────
-  fastify.delete('/:id', { ...auth, schema: { params: idParam } }, async (request, reply) => {
+  fastify.delete('/:id', { ...auth, onRequest: [fastify.authenticate, fastify.requireResourceAccess('job')], schema: { params: idParam } }, async (request, reply) => {
     await pool.query(
       `UPDATE jobs SET status = 'failed', updated_at = NOW() WHERE id = $1 AND status IN ('queued', 'scheduled')`,
       [request.params.id]
@@ -189,9 +208,9 @@ const jobsRoutes: FastifyPluginAsyncZod = async (fastify) => {
       const offset = (page - 1) * limit;
       const { rows } = await pool.query(
         queue_id
-          ? `SELECT * FROM dead_letter_jobs WHERE queue_id = $1 ORDER BY failed_at DESC LIMIT $2 OFFSET $3`
-          : `SELECT * FROM dead_letter_jobs ORDER BY failed_at DESC LIMIT $1 OFFSET $2`,
-        queue_id ? [queue_id, limit, offset] : [limit, offset]
+          ? `SELECT d.* FROM dead_letter_jobs d JOIN queues q ON q.id = d.queue_id JOIN projects p ON p.id = q.project_id JOIN memberships m ON m.organization_id = p.organization_id WHERE m.user_id = $1 AND d.queue_id = $2 ORDER BY d.failed_at DESC LIMIT $3 OFFSET $4`
+          : `SELECT d.* FROM dead_letter_jobs d JOIN queues q ON q.id = d.queue_id JOIN projects p ON p.id = q.project_id JOIN memberships m ON m.organization_id = p.organization_id WHERE m.user_id = $1 ORDER BY d.failed_at DESC LIMIT $2 OFFSET $3`,
+        queue_id ? [userId(request), queue_id, limit, offset] : [userId(request), limit, offset]
       );
       return { data: rows };
     }
@@ -200,7 +219,7 @@ const jobsRoutes: FastifyPluginAsyncZod = async (fastify) => {
   // ── Retry from Dead Letter Queue ─────────────────────────────────────────
   fastify.post(
     '/dead-letter/:id/retry',
-    { ...auth, schema: { params: idParam } },
+    { ...auth, onRequest: [fastify.authenticate, fastify.requireResourceAccess('dead_letter')], schema: { params: idParam } },
     async (request, reply) => {
       const { id } = request.params;
 

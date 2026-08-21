@@ -36,6 +36,8 @@ A production-inspired, reliable async job execution platform built purely on Pos
    npm run dev:dashboard
    ```
 
+For validation, run `npm run build` and `npm run typecheck`. The API and worker integration tests require a PostgreSQL database with the migrations applied and connection settings compatible with the target server.
+
 ## Documentation
 
 - [Architecture & Data Flow](./docs/architecture.md)

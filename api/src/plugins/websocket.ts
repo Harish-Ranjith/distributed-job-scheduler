@@ -5,10 +5,10 @@ import type WebSocket from 'ws';
 import type { Client } from 'pg';
 
 // ─── WebSocket broadcast registry ─────────────────────────────────────────────
-const connectedClients = new Set<WebSocket>();
+const connectedClients = new Map<WebSocket, Set<string>>();
 
-export function addClient(ws: WebSocket): void {
-  connectedClients.add(ws);
+export function addClient(ws: WebSocket, organizationIds: string[]): void {
+  connectedClients.set(ws, new Set(organizationIds));
 }
 
 export function removeClient(ws: WebSocket): void {
@@ -16,8 +16,17 @@ export function removeClient(ws: WebSocket): void {
 }
 
 export function broadcastToClients(payload: string): void {
-  for (const client of connectedClients) {
-    if (client.readyState === 1 /* OPEN */) {
+  let organizationIds: string[] = [];
+  try {
+    const event = JSON.parse(payload) as { organization_id?: string; organization_ids?: string[] };
+    organizationIds = event.organization_ids ?? (event.organization_id ? [event.organization_id] : []);
+  } catch {
+    return;
+  }
+
+  for (const [client, clientOrganizations] of connectedClients) {
+    const isGlobalReload = payload.includes('"event":"reload"');
+    if ((isGlobalReload || organizationIds.some((id) => clientOrganizations.has(id))) && client.readyState === 1) {
       client.send(payload);
     }
   }

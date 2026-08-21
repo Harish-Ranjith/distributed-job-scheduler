@@ -3,6 +3,7 @@ import Fastify from 'fastify';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import cors from '@fastify/cors';
+import rateLimit from '@fastify/rate-limit';
 import jwt from '@fastify/jwt';
 import fastifyWebSocket from '@fastify/websocket';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
@@ -10,6 +11,7 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 
 import errorHandlerPlugin from './plugins/errorHandler.js';
 import authPlugin from './plugins/auth.js';
+import authorizePlugin from './plugins/authorize.js';
 import websocketRelayPlugin from './plugins/websocket.js';
 
 import authRoutes from './routes/auth.js';
@@ -48,6 +50,7 @@ export async function buildApp() {
     origin: process.env['CORS_ORIGIN'] ?? true,
     credentials: true,
   });
+  await app.register(rateLimit, { global: false, max: 100, timeWindow: '1 minute' });
 
   await app.register(jwt, {
     secret: process.env['JWT_SECRET'] ?? 'fallback-dev-secret-change-in-production',
@@ -59,6 +62,7 @@ export async function buildApp() {
   // ─── Custom plugins ─────────────────────────────────────────────────────────
   await app.register(errorHandlerPlugin);
   await app.register(authPlugin);
+  await app.register(authorizePlugin);
   await app.register(websocketRelayPlugin);
 
   // ─── Health check ───────────────────────────────────────────────────────────

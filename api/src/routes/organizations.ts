@@ -50,7 +50,7 @@ const organizationsRoutes: FastifyPluginAsyncZod = async (fastify) => {
   });
 
   // GET /api/v1/organizations/:id
-  fastify.get('/:id', { ...auth, schema: { params: z.object({ id: z.string().uuid() }) } }, async (request, reply) => {
+  fastify.get('/:id', { ...auth, onRequest: [fastify.authenticate, fastify.requireResourceAccess('organization')], schema: { params: z.object({ id: z.string().uuid() }) } }, async (request, reply) => {
     const { id } = request.params;
     const { rows } = await pool.query('SELECT * FROM organizations WHERE id = $1', [id]);
     if (!rows[0]) return reply.code(404).send({ error: { code: 'NOT_FOUND', message: 'Organization not found' } });
@@ -60,7 +60,7 @@ const organizationsRoutes: FastifyPluginAsyncZod = async (fastify) => {
   // PUT /api/v1/organizations/:id
   fastify.put(
     '/:id',
-    { ...auth, schema: { params: z.object({ id: z.string().uuid() }), body: z.object({ name: z.string().optional(), slug: z.string().optional() }) } },
+    { ...auth, onRequest: [fastify.authenticate, fastify.requireResourceAccess('organization', 'admin')], schema: { params: z.object({ id: z.string().uuid() }), body: z.object({ name: z.string().optional(), slug: z.string().optional() }) } },
     async (request, reply) => {
       const { id } = request.params;
       const { name, slug } = request.body;
@@ -77,7 +77,7 @@ const organizationsRoutes: FastifyPluginAsyncZod = async (fastify) => {
   // POST /api/v1/organizations/:id/members
   fastify.post(
     '/:id/members',
-    { ...auth, schema: { params: z.object({ id: z.string().uuid() }), body: AddMemberSchema } },
+    { ...auth, onRequest: [fastify.authenticate, fastify.requireResourceAccess('organization', 'admin')], schema: { params: z.object({ id: z.string().uuid() }), body: AddMemberSchema } },
     async (request, reply) => {
       const { id } = request.params;
       const { email, role } = request.body;
@@ -98,7 +98,7 @@ const organizationsRoutes: FastifyPluginAsyncZod = async (fastify) => {
   // GET /api/v1/organizations/:id/members
   fastify.get(
     '/:id/members',
-    { ...auth, schema: { params: z.object({ id: z.string().uuid() }) } },
+    { ...auth, onRequest: [fastify.authenticate, fastify.requireResourceAccess('organization', 'admin')], schema: { params: z.object({ id: z.string().uuid() }) } },
     async (request) => {
       const { id } = request.params;
       const { rows } = await pool.query(

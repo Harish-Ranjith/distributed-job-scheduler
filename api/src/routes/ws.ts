@@ -1,6 +1,7 @@
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { addClient, removeClient } from '../plugins/websocket.js';
 import type { SocketStream } from '@fastify/websocket';
+import { pool } from '../db/pool.js';
 
 const wsRoutes: FastifyPluginAsyncZod = async (fastify) => {
   // GET /ws — WebSocket upgrade
@@ -8,7 +9,7 @@ const wsRoutes: FastifyPluginAsyncZod = async (fastify) => {
   fastify.get(
     '/',
     { websocket: true },
-    (connection: SocketStream, request) => {
+    async (connection: SocketStream, request) => {
       const socket = connection.socket;
       // Verify JWT from query param
       const token = (request.query as Record<string, string>)['token'];
@@ -18,13 +19,17 @@ const wsRoutes: FastifyPluginAsyncZod = async (fastify) => {
       }
 
       try {
-        fastify.jwt.verify(token);
+        const payload = fastify.jwt.verify<{ sub: string }>(token);
+        const { rows: memberships } = await pool.query<{ organization_id: string }>(
+          'SELECT organization_id FROM memberships WHERE user_id = $1',
+          [payload.sub]
+        );
+        addClient(socket, memberships.map((membership) => membership.organization_id));
       } catch {
         socket.close(1008, 'Invalid authentication token');
         return;
       }
 
-      addClient(socket);
       fastify.log.info({ clientCount: 1 }, 'WebSocket client connected');
 
       // Send immediate connection acknowledgment

@@ -1,8 +1,6 @@
-import React, { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client.js';
 import { StatusBadge } from '../components/StatusBadge.js';
-import type { Queue } from '@job-scheduler/shared';
 
 export function QueueConfig() {
   const queryClient = useQueryClient();
@@ -38,6 +36,7 @@ export function QueueConfig() {
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', fontSize: '0.875rem' }}>
                 <div><span style={{ color: 'var(--text-muted)', display: 'block' }}>Priority</span> {queue.priority}</div>
                 <div><span style={{ color: 'var(--text-muted)', display: 'block' }}>Concurrency Limit</span> {queue.concurrency_limit}</div>
+                <div><span style={{ color: 'var(--text-muted)', display: 'block' }}>Slots In Use</span> {queue.active ?? 0} / {queue.concurrency_limit}</div>
                 <div><span style={{ color: 'var(--text-muted)', display: 'block' }}>Retry Policy</span> {queue.retry_strategy || 'None'}</div>
               </div>
             </div>

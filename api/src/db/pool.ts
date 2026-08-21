@@ -1,11 +1,16 @@
 import { Pool, Client } from 'pg';
 
+const databaseUrl = process.env['DATABASE_URL'];
+const databaseSsl = databaseUrl && !/localhost|127\.0\.0\.1/.test(databaseUrl)
+  ? { rejectUnauthorized: false }
+  : false;
+
 // ─── Shared pool for all API queries (pooled Neon connection) ─────────────────
 // PgBouncer transaction mode: safe for standard queries but NOT for LISTEN/NOTIFY
 // or multi-statement session operations.
 export const pool = new Pool({
-  connectionString: process.env['DATABASE_URL'],
-  ssl: { rejectUnauthorized: false },
+  connectionString: databaseUrl,
+  ssl: databaseSsl,
   max: 20,
   idleTimeoutMillis: 30_000,
   connectionTimeoutMillis: 5_000,
@@ -19,8 +24,9 @@ pool.on('error', (err) => {
 // Use for: LISTEN/NOTIFY relay and migration runner.
 // Each call creates a new client; caller is responsible for connect() and end().
 export function createDirectClient(): Client {
+  const directUrl = process.env['DATABASE_DIRECT_URL'];
   return new Client({
-    connectionString: process.env['DATABASE_DIRECT_URL'],
-    ssl: { rejectUnauthorized: false },
+    connectionString: directUrl,
+    ssl: directUrl && !/localhost|127\.0\.0\.1/.test(directUrl) ? { rejectUnauthorized: false } : false,
   });
 }

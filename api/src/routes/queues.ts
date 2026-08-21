@@ -30,6 +30,11 @@ const queuesRoutes: FastifyPluginAsyncZod = async (fastify) => {
     { ...auth, schema: { body: CreateQueueSchema.extend({ project_id: z.string().uuid() }) } },
     async (request, reply) => {
       const { project_id, name, description, priority, concurrency_limit, retry_policy_id } = request.body;
+      const { rows: memberships } = await pool.query(
+        `SELECT 1 FROM memberships m JOIN projects p ON p.organization_id = m.organization_id WHERE m.user_id = $1 AND p.id = $2 AND m.role IN ('owner', 'admin')`,
+        [(request.user as { sub: string }).sub, project_id]
+      );
+      if (!memberships[0]) return reply.code(404).send({ error: { code: 'NOT_FOUND', message: 'Project not found' } });
       const { rows } = await pool.query(
         `INSERT INTO queues (project_id, name, description, priority, concurrency_limit, retry_policy_id)
          VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
@@ -47,16 +52,16 @@ const queuesRoutes: FastifyPluginAsyncZod = async (fastify) => {
       const { project_id } = request.query;
       const { rows } = await pool.query(
         project_id
-          ? `SELECT q.*, rp.strategy as retry_strategy FROM queues q LEFT JOIN retry_policies rp ON rp.id = q.retry_policy_id WHERE q.project_id = $1 ORDER BY q.priority DESC, q.created_at DESC`
-          : `SELECT q.*, rp.strategy as retry_strategy FROM queues q LEFT JOIN retry_policies rp ON rp.id = q.retry_policy_id ORDER BY q.priority DESC, q.created_at DESC`,
-        project_id ? [project_id] : []
+          ? `SELECT q.*, rp.strategy as retry_strategy FROM queues q LEFT JOIN retry_policies rp ON rp.id = q.retry_policy_id JOIN projects p ON p.id = q.project_id JOIN memberships m ON m.organization_id = p.organization_id WHERE q.project_id = $1 AND m.user_id = $2 ORDER BY q.priority DESC, q.created_at DESC`
+          : `SELECT q.*, rp.strategy as retry_strategy FROM queues q LEFT JOIN retry_policies rp ON rp.id = q.retry_policy_id JOIN projects p ON p.id = q.project_id JOIN memberships m ON m.organization_id = p.organization_id WHERE m.user_id = $1 ORDER BY q.priority DESC, q.created_at DESC`,
+        project_id ? [project_id, (request.user as { sub: string }).sub] : [(request.user as { sub: string }).sub]
       );
       return { data: rows };
     }
   );
 
   // GET /api/v1/queues/:id
-  fastify.get('/:id', { ...auth, schema: { params: idParam } }, async (request, reply) => {
+  fastify.get('/:id', { ...auth, onRequest: [fastify.authenticate, fastify.requireResourceAccess('queue')], schema: { params: idParam } }, async (request, reply) => {
     const { rows } = await pool.query(
       `SELECT q.*, rp.strategy as retry_strategy, rp.base_delay_ms, rp.max_delay_ms, rp.jitter
        FROM queues q LEFT JOIN retry_policies rp ON rp.id = q.retry_policy_id
@@ -68,7 +73,7 @@ const queuesRoutes: FastifyPluginAsyncZod = async (fastify) => {
   });
 
   // PUT /api/v1/queues/:id
-  fastify.put('/:id', { ...auth, schema: { params: idParam, body: UpdateQueueSchema } }, async (request, reply) => {
+  fastify.put('/:id', { ...auth, onRequest: [fastify.authenticate, fastify.requireResourceAccess('queue', 'admin')], schema: { params: idParam, body: UpdateQueueSchema } }, async (request, reply) => {
     const { name, description, priority, concurrency_limit, retry_policy_id } = request.body;
     const { rows } = await pool.query(
       `UPDATE queues SET
@@ -86,13 +91,13 @@ const queuesRoutes: FastifyPluginAsyncZod = async (fastify) => {
   });
 
   // DELETE /api/v1/queues/:id
-  fastify.delete('/:id', { ...auth, schema: { params: idParam } }, async (request, reply) => {
+  fastify.delete('/:id', { ...auth, onRequest: [fastify.authenticate, fastify.requireResourceAccess('queue', 'admin')], schema: { params: idParam } }, async (request, reply) => {
     await pool.query('DELETE FROM queues WHERE id = $1', [request.params.id]);
     return reply.code(204).send();
   });
 
   // POST /api/v1/queues/:id/pause
-  fastify.post('/:id/pause', { ...auth, schema: { params: idParam } }, async (request, reply) => {
+  fastify.post('/:id/pause', { ...auth, onRequest: [fastify.authenticate, fastify.requireResourceAccess('queue', 'admin')], schema: { params: idParam } }, async (request, reply) => {
     const { rows } = await pool.query(
       `UPDATE queues SET status = 'paused', updated_at = NOW() WHERE id = $1 RETURNING id, status`,
       [request.params.id]
@@ -102,7 +107,7 @@ const queuesRoutes: FastifyPluginAsyncZod = async (fastify) => {
   });
 
   // POST /api/v1/queues/:id/resume
-  fastify.post('/:id/resume', { ...auth, schema: { params: idParam } }, async (request, reply) => {
+  fastify.post('/:id/resume', { ...auth, onRequest: [fastify.authenticate, fastify.requireResourceAccess('queue', 'admin')], schema: { params: idParam } }, async (request, reply) => {
     const { rows } = await pool.query(
       `UPDATE queues SET status = 'active', updated_at = NOW() WHERE id = $1 RETURNING id, status`,
       [request.params.id]
@@ -112,7 +117,7 @@ const queuesRoutes: FastifyPluginAsyncZod = async (fastify) => {
   });
 
   // GET /api/v1/queues/:id/stats
-  fastify.get('/:id/stats', { ...auth, schema: { params: idParam } }, async (request) => {
+  fastify.get('/:id/stats', { ...auth, onRequest: [fastify.authenticate, fastify.requireResourceAccess('queue')], schema: { params: idParam } }, async (request) => {
     const { rows } = await pool.query<{ status: string; count: string }>(
       `SELECT status, COUNT(*)::int as count FROM jobs WHERE queue_id = $1 GROUP BY status`,
       [request.params.id]
@@ -131,6 +136,8 @@ const queuesRoutes: FastifyPluginAsyncZod = async (fastify) => {
       failed: parseInt(stats['failed'] ?? '0'),
       dead_letter: parseInt(stats['dead_letter'] ?? '0'),
       total,
+      active: parseInt(stats['claimed'] ?? '0') + parseInt(stats['running'] ?? '0'),
+      concurrency_limit: (await pool.query<{ concurrency_limit: number }>('SELECT concurrency_limit FROM queues WHERE id = $1', [request.params.id])).rows[0]?.concurrency_limit ?? 0,
     };
   });
 };
