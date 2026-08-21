@@ -62,7 +62,18 @@ export async function executeJob(
       throw new Error(`No handler registered for job type: ${job.job_type}`);
     }
 
-    await handler(job, handlerLog);
+    const timeoutMs = parseInt(process.env['WORKER_JOB_TIMEOUT_MS'] ?? '300000');
+    let timeoutHandle: NodeJS.Timeout | undefined;
+    try {
+      await Promise.race([
+        handler(job, handlerLog),
+        new Promise<never>((_, reject) => {
+          timeoutHandle = setTimeout(() => reject(new Error(`Job execution timed out after ${timeoutMs}ms`)), timeoutMs);
+        }),
+      ]);
+    } finally {
+      if (timeoutHandle) clearTimeout(timeoutHandle);
+    }
 
     // 4. Success
     const durationMs = Date.now() - startTime;

@@ -1,10 +1,23 @@
+import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client.js';
 import { StatusBadge } from '../components/StatusBadge.js';
 
+interface QueueView {
+  id: string;
+  name: string;
+  description: string | null;
+  status: 'active' | 'paused';
+  priority: number;
+  concurrency_limit: number;
+  active?: number;
+  retry_strategy?: string | null;
+}
+
 export function QueueConfig() {
   const queryClient = useQueryClient();
-  const { data, isLoading } = useQuery<{ data: any[] }>({
+  const [editingQueue, setEditingQueue] = useState<QueueView | null>(null);
+  const { data, isLoading } = useQuery<{ data: QueueView[] }>({
     queryKey: ['queues'],
     queryFn: () => api.get('/queues'),
   });
@@ -13,6 +26,19 @@ export function QueueConfig() {
     mutationFn: ({ id, pause }: { id: string, pause: boolean }) => 
       api.post(`/queues/${id}/${pause ? 'pause' : 'resume'}`),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['queues'] }),
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: (queue: QueueView) => api.put(`/queues/${queue.id}`, {
+      name: queue.name,
+      description: queue.description || undefined,
+      priority: queue.priority,
+      concurrency_limit: queue.concurrency_limit,
+    }),
+    onSuccess: () => {
+      setEditingQueue(null);
+      void queryClient.invalidateQueries({ queryKey: ['queues'] });
+    },
   });
 
   if (isLoading) return <div>Loading...</div>;
@@ -58,8 +84,7 @@ export function QueueConfig() {
                   Resume Queue
                 </button>
               )}
-              {/* In a real app, clicking edit would open a modal with a form to PUT /api/v1/queues/:id */}
-              <button className="btn btn-outline">Edit Config</button>
+              <button className="btn btn-outline" onClick={() => setEditingQueue({ ...queue })}>Edit Config</button>
             </div>
           </div>
         ))}
@@ -70,6 +95,22 @@ export function QueueConfig() {
           </div>
         )}
       </div>
+
+      {editingQueue && (
+        <div className="glass-panel" style={{ marginTop: '1.5rem' }}>
+          <h2 style={{ marginBottom: '1rem' }}>Edit {editingQueue.name}</h2>
+          <div style={{ display: 'grid', gap: '0.75rem', maxWidth: 420 }}>
+            <label>Name<input value={editingQueue.name} onChange={(event) => setEditingQueue({ ...editingQueue, name: event.target.value })} /></label>
+            <label>Description<input value={editingQueue.description ?? ''} onChange={(event) => setEditingQueue({ ...editingQueue, description: event.target.value })} /></label>
+            <label>Priority<input type="number" value={editingQueue.priority} onChange={(event) => setEditingQueue({ ...editingQueue, priority: Number(event.target.value) })} /></label>
+            <label>Concurrency limit<input type="number" min={1} value={editingQueue.concurrency_limit} onChange={(event) => setEditingQueue({ ...editingQueue, concurrency_limit: Number(event.target.value) })} /></label>
+            <div style={{ display: 'flex', gap: '0.5rem' }}>
+              <button className="btn btn-primary" disabled={updateMutation.isPending} onClick={() => updateMutation.mutate(editingQueue)}>Save</button>
+              <button className="btn btn-outline" onClick={() => setEditingQueue(null)}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

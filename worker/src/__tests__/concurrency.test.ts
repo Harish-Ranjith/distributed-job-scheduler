@@ -33,7 +33,7 @@ test('Concurrent claimJob calls do not claim the same job (SKIP LOCKED works)', 
 
   // Fire 10 concurrent claim requests (simulating 10 workers)
   const claimPromises = Array.from({ length: 10 }).map((_, i) => 
-    claimJob(testPool, queueId, `worker-${i}`)
+    claimJob(testPool, queueId, uuidv4())
   );
 
   const results = await Promise.all(claimPromises);

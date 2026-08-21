@@ -34,7 +34,7 @@ export class WorkerPool {
     this.poll();
   }
 
-  public async stop() {
+  public async stop(timeoutMs = parseInt(process.env['WORKER_SHUTDOWN_TIMEOUT_MS'] ?? '30000')) {
     this.log.info('Draining worker pool... Waiting for active jobs to complete.');
     this.isDraining = true;
     if (this.pollTimer) {
@@ -43,8 +43,12 @@ export class WorkerPool {
     }
 
     // Wait until active jobs finish
-    while (this.activeJobs > 0) {
+    const deadline = Date.now() + timeoutMs;
+    while (this.activeJobs > 0 && Date.now() < deadline) {
       await new Promise((res) => setTimeout(res, 500));
+    }
+    if (this.activeJobs > 0) {
+      this.log.warn({ activeJobs: this.activeJobs, timeoutMs }, 'Shutdown deadline reached; active leases will expire for recovery');
     }
     this.log.info('Worker pool drained.');
   }

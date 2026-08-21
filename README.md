@@ -38,6 +38,8 @@ A production-inspired, reliable async job execution platform built purely on Pos
 
 For validation, run `npm run build` and `npm run typecheck`. The API and worker integration tests require a PostgreSQL database with the migrations applied and connection settings compatible with the target server.
 
+Worker reliability settings include `WORKER_LEASE_DURATION_SECONDS`, `WORKER_HEARTBEAT_INTERVAL_MS`, `WORKER_JOB_TIMEOUT_MS`, and `WORKER_SHUTDOWN_TIMEOUT_MS`; see `.env.example` for defaults.
+
 ## Documentation
 
 - [Architecture & Data Flow](./docs/architecture.md)
