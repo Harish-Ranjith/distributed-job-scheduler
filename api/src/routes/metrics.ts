@@ -3,17 +3,18 @@ import { MetricsWindowSchema } from '@job-scheduler/shared';
 import { pool } from '../db/pool.js';
 
 // Simple in-process cache to avoid hammering DB on dashboard refresh
-let cachedSummary: unknown = null;
-let cacheExpiry = 0;
+const cachedSummaries = new Map<string, { value: unknown; expiresAt: number }>();
 const CACHE_TTL_MS = 10_000;
 
 const metricsRoutes: FastifyPluginAsyncZod = async (fastify) => {
   const auth = { onRequest: [fastify.authenticate] };
 
   // GET /api/v1/metrics/summary
-  fastify.get('/summary', { ...auth }, async () => {
-    if (cachedSummary && Date.now() < cacheExpiry) {
-      return cachedSummary;
+  fastify.get('/summary', { ...auth }, async (request) => {
+    const userId = (request.user as { sub: string }).sub;
+    const cached = cachedSummaries.get(userId);
+    if (cached && Date.now() < cached.expiresAt) {
+      return cached.value;
     }
 
     const [
@@ -25,30 +26,41 @@ const metricsRoutes: FastifyPluginAsyncZod = async (fastify) => {
       { rows: totalToday },
     ] = await Promise.all([
       pool.query<{ count: string }>(`
-        SELECT COUNT(*)::int as count FROM job_executions
-        WHERE started_at > NOW() - INTERVAL '1 minute'
-      `),
+        SELECT COUNT(*)::int as count FROM job_executions e
+        JOIN jobs j ON j.id = e.job_id JOIN queues q ON q.id = j.queue_id
+        JOIN projects p ON p.id = q.project_id JOIN memberships m ON m.organization_id = p.organization_id
+        WHERE m.user_id = $1 AND e.started_at > NOW() - INTERVAL '1 minute'
+      `, [userId]),
       pool.query<{ total: string; completed: string }>(`
         SELECT
           COUNT(*)::int as total,
           COUNT(*) FILTER (WHERE status = 'completed')::int as completed
-        FROM job_executions
-        WHERE started_at > NOW() - INTERVAL '1 hour'
-      `),
+        FROM job_executions e JOIN jobs j ON j.id = e.job_id JOIN queues q ON q.id = j.queue_id
+        JOIN projects p ON p.id = q.project_id JOIN memberships m ON m.organization_id = p.organization_id
+        WHERE m.user_id = $1 AND e.started_at > NOW() - INTERVAL '1 hour'
+      `, [userId]),
       pool.query<{ avg_ms: string }>(`
-        SELECT AVG(duration_ms)::int as avg_ms FROM job_executions
-        WHERE status = 'completed' AND started_at > NOW() - INTERVAL '1 hour'
-      `),
+        SELECT AVG(e.duration_ms)::int as avg_ms FROM job_executions e JOIN jobs j ON j.id = e.job_id
+        JOIN queues q ON q.id = j.queue_id JOIN projects p ON p.id = q.project_id
+        JOIN memberships m ON m.organization_id = p.organization_id
+        WHERE m.user_id = $1 AND e.status = 'completed' AND e.started_at > NOW() - INTERVAL '1 hour'
+      `, [userId]),
       pool.query<{ queue_id: string; status: string; count: string }>(`
-        SELECT queue_id, status, COUNT(*)::int as count FROM jobs
-        WHERE status NOT IN ('completed') GROUP BY queue_id, status
-      `),
+        SELECT j.queue_id, j.status, COUNT(*)::int as count FROM jobs j JOIN queues q ON q.id = j.queue_id
+        JOIN projects p ON p.id = q.project_id JOIN memberships m ON m.organization_id = p.organization_id
+        WHERE m.user_id = $1 AND j.status NOT IN ('completed') GROUP BY j.queue_id, j.status
+      `, [userId]),
       pool.query<{ count: string }>(`
-        SELECT COUNT(*)::int as count FROM workers WHERE status = 'active'
-      `),
+        SELECT COUNT(DISTINCT w.id)::int as count FROM workers w JOIN jobs j ON j.worker_id = w.id
+        JOIN queues q ON q.id = j.queue_id JOIN projects p ON p.id = q.project_id
+        JOIN memberships m ON m.organization_id = p.organization_id
+        WHERE m.user_id = $1 AND w.status = 'active'
+      `, [userId]),
       pool.query<{ count: string }>(`
-        SELECT COUNT(*)::int as count FROM jobs WHERE created_at > NOW() - INTERVAL '24 hours'
-      `),
+        SELECT COUNT(*)::int as count FROM jobs j JOIN queues q ON q.id = j.queue_id
+        JOIN projects p ON p.id = q.project_id JOIN memberships m ON m.organization_id = p.organization_id
+        WHERE m.user_id = $1 AND j.created_at > NOW() - INTERVAL '24 hours'
+      `, [userId]),
     ]);
 
     // Aggregate queue depths
@@ -70,8 +82,7 @@ const metricsRoutes: FastifyPluginAsyncZod = async (fastify) => {
       total_jobs_today: parseInt(totalToday[0]?.count ?? '0'),
     };
 
-    cachedSummary = summary;
-    cacheExpiry = Date.now() + CACHE_TTL_MS;
+    cachedSummaries.set(userId, { value: summary, expiresAt: Date.now() + CACHE_TTL_MS });
     return summary;
   });
 
@@ -85,6 +96,7 @@ const metricsRoutes: FastifyPluginAsyncZod = async (fastify) => {
     const interval = intervalMap[window];
     const bucket = bucketMap[window];
 
+    const userId = (request.user as { sub: string }).sub;
     const { rows } = await pool.query<{
       timestamp: string;
       total: string;
@@ -96,11 +108,12 @@ const metricsRoutes: FastifyPluginAsyncZod = async (fastify) => {
         COUNT(*)::int as total,
         COUNT(*) FILTER (WHERE status = 'completed')::int as completed,
         COUNT(*) FILTER (WHERE status = 'failed')::int as failed
-      FROM job_executions
-      WHERE started_at > NOW() - INTERVAL '${interval}'
+      FROM job_executions e JOIN jobs j ON j.id = e.job_id JOIN queues q ON q.id = j.queue_id
+      JOIN projects p ON p.id = q.project_id JOIN memberships m ON m.organization_id = p.organization_id
+      WHERE m.user_id = $1 AND e.started_at > NOW() - INTERVAL '${interval}'
       GROUP BY 1
       ORDER BY 1
-    `);
+    `, [userId]);
 
     return {
       window,

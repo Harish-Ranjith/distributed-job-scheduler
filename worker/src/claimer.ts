@@ -43,12 +43,14 @@ export async function claimJob(
       SET
         status     = 'claimed',
         worker_id  = $2,
+        lease_token = gen_random_uuid(),
+        lease_expires_at = NOW() + ($3 || ' seconds')::INTERVAL,
         updated_at = NOW()
       FROM candidate
       WHERE jobs.id = candidate.id
         AND jobs.status IN ('queued', 'scheduled')
       RETURNING jobs.*
-    `, [queueId, workerId]);
+    `, [queueId, workerId, process.env['WORKER_LEASE_DURATION_SECONDS'] ?? '30']);
 
     await client.query('COMMIT');
     return rows[0] ?? null;
@@ -86,12 +88,14 @@ export async function claimNextJob(pool: Pool, workerId: string): Promise<Job | 
       SET
         status     = 'claimed',
         worker_id  = $1,
+        lease_token = gen_random_uuid(),
+        lease_expires_at = NOW() + ($2 || ' seconds')::INTERVAL,
         updated_at = NOW()
       FROM candidate
       WHERE jobs.id = candidate.id
         AND jobs.status IN ('queued', 'scheduled')
       RETURNING jobs.*
-    `, [workerId]);
+    `, [workerId, process.env['WORKER_LEASE_DURATION_SECONDS'] ?? '30']);
 
     await client.query('COMMIT');
     return rows[0] ?? null;

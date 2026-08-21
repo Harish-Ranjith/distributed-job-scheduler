@@ -30,38 +30,45 @@ CREATE TYPE job_status AS ENUM (
 );
 
 CREATE TABLE jobs (
-  id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  queue_id         UUID NOT NULL REFERENCES queues(id) ON DELETE RESTRICT,
-  worker_id        UUID,                   -- FK added after workers table; nullable
-  status           job_status NOT NULL DEFAULT 'queued',
-  job_type         TEXT NOT NULL,
-  payload          JSONB NOT NULL DEFAULT '{}',
-  priority         SMALLINT NOT NULL DEFAULT 0,
-  run_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  max_attempts     SMALLINT NOT NULL DEFAULT 3
-                     CHECK (max_attempts >= 1),
-  attempt_count    SMALLINT NOT NULL DEFAULT 0,
-  idempotency_key  TEXT,
-  cron_expression  TEXT,                   -- set for jobs spawned by a scheduled_job
-  created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid (),
+    queue_id UUID NOT NULL REFERENCES queues (id) ON DELETE RESTRICT,
+    worker_id UUID, -- FK added after workers table; nullable
+    status job_status NOT NULL DEFAULT 'queued',
+    job_type TEXT NOT NULL,
+    payload JSONB NOT NULL DEFAULT '{}',
+    priority SMALLINT NOT NULL DEFAULT 0,
+    run_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    max_attempts SMALLINT NOT NULL DEFAULT 3 CHECK (max_attempts >= 1),
+    attempt_count SMALLINT NOT NULL DEFAULT 0,
+    idempotency_key TEXT,
+    cron_expression TEXT, -- set for jobs spawned by a scheduled_job
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 -- The claim query index: only actionable rows, ordered by priority then age
-CREATE INDEX idx_jobs_claim ON jobs (status, run_at ASC, priority DESC)
-  WHERE status IN ('queued', 'scheduled');
+CREATE INDEX idx_jobs_claim ON jobs (
+    status,
+    run_at ASC,
+    priority DESC
+)
+WHERE
+    status IN ('queued', 'scheduled');
 
 -- Queue-level concurrency check: count running jobs per queue quickly
 CREATE INDEX idx_jobs_queue_status ON jobs (queue_id, status)
-  WHERE status IN ('claimed', 'running');
+WHERE
+    status IN ('claimed', 'running');
 
 -- Idempotency: unique key only where provided
 CREATE UNIQUE INDEX idx_jobs_idempotency ON jobs (idempotency_key)
-  WHERE idempotency_key IS NOT NULL;
+WHERE
+    idempotency_key IS NOT NULL;
 
 -- Text search on job_type (uses pg_trgm from migration 001)
 CREATE INDEX idx_jobs_job_type_trgm ON jobs USING GIN (job_type gin_trgm_ops);
 
 -- General lookups
-CREATE INDEX idx_jobs_queue   ON jobs (queue_id);
+CREATE INDEX idx_jobs_queue ON jobs (queue_id);
+
 CREATE INDEX idx_jobs_created ON jobs (created_at DESC);

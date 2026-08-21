@@ -223,31 +223,38 @@ const jobsRoutes: FastifyPluginAsyncZod = async (fastify) => {
     async (request, reply) => {
       const { id } = request.params;
 
-      const { rows: dlqRows } = await pool.query(
-        'SELECT * FROM dead_letter_jobs WHERE id = $1',
-        [id]
-      );
-      const dlqJob = dlqRows[0];
-      if (!dlqJob) {
-        return reply.code(404).send({ error: { code: 'NOT_FOUND', message: 'Dead letter job not found' } });
-      }
-
-      // If original job still exists, reset it; otherwise create a fresh one
-      if (dlqJob.original_job_id) {
-        await pool.query(
-          `UPDATE jobs SET status = 'queued', attempt_count = 0, run_at = NOW(), updated_at = NOW()
-           WHERE id = $1`,
-          [dlqJob.original_job_id]
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        const { rows: dlqRows } = await client.query(
+          'SELECT * FROM dead_letter_jobs WHERE id = $1 FOR UPDATE', [id]
         );
-      } else {
-        await pool.query(
-          `INSERT INTO jobs (queue_id, job_type, payload, max_attempts) VALUES ($1, $2, $3, $4)`,
-          [dlqJob.queue_id, dlqJob.job_type, JSON.stringify(dlqJob.payload), dlqJob.max_attempts]
-        );
+        const dlqJob = dlqRows[0];
+        if (!dlqJob) {
+          await client.query('ROLLBACK');
+          return reply.code(404).send({ error: { code: 'NOT_FOUND', message: 'Dead letter job not found' } });
+        }
+        if (dlqJob.original_job_id) {
+          await client.query(
+            `UPDATE jobs SET status = 'queued', attempt_count = 0, run_at = NOW(), worker_id = NULL,
+                    lease_token = NULL, lease_expires_at = NULL, updated_at = NOW() WHERE id = $1`,
+            [dlqJob.original_job_id]
+          );
+        } else {
+          await client.query(
+            `INSERT INTO jobs (queue_id, job_type, payload, max_attempts) VALUES ($1, $2, $3, $4)`,
+            [dlqJob.queue_id, dlqJob.job_type, JSON.stringify(dlqJob.payload), dlqJob.max_attempts]
+          );
+        }
+        await client.query('DELETE FROM dead_letter_jobs WHERE id = $1', [id]);
+        await client.query('COMMIT');
+        return reply.code(200).send({ message: 'Job requeued from dead letter queue' });
+      } catch (err) {
+        await client.query('ROLLBACK');
+        throw err;
+      } finally {
+        client.release();
       }
-
-      await pool.query('DELETE FROM dead_letter_jobs WHERE id = $1', [id]);
-      return reply.code(200).send({ message: 'Job requeued from dead letter queue' });
     }
   );
 };

@@ -59,6 +59,8 @@ erDiagram
         uuid id PK
         uuid queue_id FK
         uuid worker_id FK "nullable"
+        uuid lease_token "nullable"
+        timestamp lease_expires_at "nullable"
         string job_type
         jsonb payload
         int priority
@@ -108,6 +110,7 @@ erDiagram
         uuid id PK
         uuid job_id FK
         uuid worker_id FK
+        uuid lease_token "nullable"
         int attempt_number
         enum status "running, completed, failed"
         text error_message

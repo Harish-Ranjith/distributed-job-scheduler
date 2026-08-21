@@ -46,3 +46,9 @@ API access is tenant-scoped through organization membership. Resource ownership 
 WebSocket connections resolve the user's organization memberships at connection time. PostgreSQL job and worker notifications include the owning organization ID set, and the API only broadcasts an event to clients whose membership set contains one of those IDs. Membership changes require reconnecting the socket to refresh the cached membership set; only the data-free `reload` fallback is global.
 
 The scheduler is safe under multiple API instances because each due schedule row remains locked through insertion of the concrete job and advancement of `next_run_at`. Authorization adds database membership checks to resource requests; a larger deployment could cache non-privileged membership lookups, but privileged writes should continue to revalidate against PostgreSQL.
+
+## 7. At-Least-Once Execution and Fenced Leases
+
+Job submission idempotency and execution idempotency are separate guarantees. The partial unique idempotency-key index prevents duplicate logical submissions, but it cannot make an external side effect exactly once. Handlers must tolerate retries and use downstream idempotency keys where applicable.
+
+Claims receive a unique `lease_token` and `lease_expires_at`. Heartbeats renew active leases, the reaper recovers only expired leases, and completion/retry/DLQ updates require the current worker and lease token. A worker that finishes after its job has been reclaimed is fenced and cannot overwrite the newer execution. The resulting guarantee is at-least-once execution with durable, fenced ownership, not exactly-once external side effects.

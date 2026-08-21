@@ -13,6 +13,8 @@ export async function executeJob(
   const startTime = Date.now();
   let executionId: string | null = null;
   const attemptNumber = job.attempt_count + 1;
+  const leaseToken = job.lease_token;
+  if (!leaseToken) throw new Error(`Lease missing for job ${job.id}`);
 
   const jobLog = log.child({ job_id: job.id, attempt: attemptNumber });
   jobLog.info({ job_type: job.job_type, payload: job.payload }, 'Starting job execution');
@@ -39,17 +41,20 @@ export async function executeJob(
   try {
     // 1. Create execution row
     const { rows: execRows } = await client.query(
-      `INSERT INTO job_executions (job_id, worker_id, attempt_number, status)
-       VALUES ($1, $2, $3, 'running') RETURNING id`,
-      [job.id, workerId, attemptNumber]
+      `INSERT INTO job_executions (job_id, worker_id, lease_token, attempt_number, status)
+       VALUES ($1, $2, $3, $4, 'running') RETURNING id`,
+      [job.id, workerId, leaseToken, attemptNumber]
     );
     executionId = execRows[0]!.id;
 
     // 2. Mark job as running
-    await client.query(
-      `UPDATE jobs SET status = 'running', updated_at = NOW() WHERE id = $1 AND status = 'claimed'`,
-      [job.id]
+    const runningResult = await client.query(
+      `UPDATE jobs SET status = 'running', updated_at = NOW()
+       WHERE id = $1 AND worker_id = $2 AND lease_token = $3
+         AND status = 'claimed' AND lease_expires_at > NOW()`,
+      [job.id, workerId, leaseToken]
     );
+    if (runningResult.rowCount !== 1) throw new Error(`Lease lost before starting job ${job.id}`);
 
     // 3. Find and run handler
     const handler = getHandler(job.job_type);
@@ -68,10 +73,16 @@ export async function executeJob(
       `UPDATE job_executions SET status = 'completed', finished_at = NOW(), duration_ms = $1 WHERE id = $2`,
       [durationMs, executionId]
     );
-    await client.query(
-      `UPDATE jobs SET status = 'completed', updated_at = NOW() WHERE id = $1`,
-      [job.id]
+    const completedResult = await client.query(
+      `UPDATE jobs SET status = 'completed', worker_id = NULL, lease_token = NULL,
+              lease_expires_at = NULL, updated_at = NOW()
+       WHERE id = $1 AND worker_id = $2 AND lease_token = $3
+         AND status = 'running' AND lease_expires_at > NOW()`,
+      [job.id, workerId, leaseToken]
     );
+    if (completedResult.rowCount !== 1) {
+      throw new Error(`Lease lost before completing job ${job.id}`);
+    }
     await appendLog('info', 'Job completed successfully');
 
     await client.query('COMMIT');
@@ -83,6 +94,16 @@ export async function executeJob(
     jobLog.error({ err: error, durationMs }, 'Job execution failed');
 
     try {
+      if (errorMessage.startsWith('Lease lost')) {
+        await client.query(
+          `UPDATE job_executions SET status = 'failed', finished_at = NOW(), duration_ms = $1, error_message = $2
+           WHERE id = $3 AND status = 'running'`,
+          [durationMs, errorMessage, executionId]
+        );
+        jobLog.warn('Execution abandoned after lease loss; job state is owned by another worker');
+        return;
+      }
+
       if (isTransactionActive) await client.query('ROLLBACK');
 
       await client.query('BEGIN');
@@ -118,19 +139,24 @@ export async function executeJob(
           );
         }
 
-        await client.query(
+        const retryResult = await client.query(
           `UPDATE jobs
-           SET status = 'queued', attempt_count = $1, run_at = NOW() + ($2 || ' milliseconds')::INTERVAL, updated_at = NOW()
-           WHERE id = $3`,
-          [attemptNumber, delayMs, job.id]
+             SET status = 'queued', attempt_count = $1, run_at = NOW() + ($2 || ' milliseconds')::INTERVAL,
+               worker_id = NULL, lease_token = NULL, lease_expires_at = NULL, updated_at = NOW()
+             WHERE id = $3 AND worker_id = $4 AND lease_token = $5 AND lease_expires_at > NOW()`,
+            [attemptNumber, delayMs, job.id, workerId, leaseToken]
         );
+          if (retryResult.rowCount !== 1) throw new Error(`Lease lost while retrying job ${job.id}`);
         jobLog.info({ delayMs }, 'Job queued for retry');
       } else {
         // Max attempts reached -> DLQ
-        await client.query(
-          `UPDATE jobs SET status = 'dead_letter', attempt_count = $1, updated_at = NOW() WHERE id = $2`,
-          [attemptNumber, job.id]
+        const dlqResult = await client.query(
+            `UPDATE jobs SET status = 'dead_letter', attempt_count = $1, worker_id = NULL,
+              lease_token = NULL, lease_expires_at = NULL, updated_at = NOW()
+             WHERE id = $2 AND worker_id = $3 AND lease_token = $4 AND lease_expires_at > NOW()`,
+            [attemptNumber, job.id, workerId, leaseToken]
         );
+          if (dlqResult.rowCount !== 1) throw new Error(`Lease lost while moving job ${job.id} to DLQ`);
         await client.query(
           `INSERT INTO dead_letter_jobs (original_job_id, queue_id, job_type, payload, failure_reason, attempt_count, max_attempts)
            VALUES ($1, $2, $3, $4, $5, $6, $7)`,

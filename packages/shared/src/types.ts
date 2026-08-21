@@ -127,6 +127,8 @@ export interface Job {
   attempt_count: number;
   idempotency_key: string | null;
   cron_expression: string | null;
+  lease_token: string | null;
+  lease_expires_at: Date | null;
   created_at: Date;
   updated_at: Date;
 }
@@ -144,6 +146,7 @@ export interface JobExecution {
   id: string;
   job_id: string;
   worker_id: string | null;
+  lease_token: string | null;
   attempt_number: number;
   status: ExecutionStatus;
   started_at: Date;

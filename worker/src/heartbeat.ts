@@ -24,6 +24,7 @@ export async function startHeartbeat(
   const hostname = process.env['HOSTNAME'] ?? 'unknown';
   const pid = process.pid;
   const intervalMs = opts.intervalMs ?? parseInt(process.env['WORKER_HEARTBEAT_INTERVAL_MS'] ?? '10000');
+  const leaseDurationSeconds = process.env['WORKER_LEASE_DURATION_SECONDS'] ?? '30';
 
   // Register worker
   const { rows } = await pool.query<{ id: string }>(
@@ -46,6 +47,12 @@ export async function startHeartbeat(
         pool.query(
           `UPDATE workers SET last_seen = NOW() WHERE id = $1`,
           [workerId]
+        ),
+        pool.query(
+          `UPDATE jobs
+           SET lease_expires_at = NOW() + ($2 || ' seconds')::INTERVAL, updated_at = NOW()
+           WHERE worker_id = $1 AND status IN ('claimed', 'running') AND lease_expires_at > NOW()`,
+          [workerId, leaseDurationSeconds]
         ),
       ]);
     } catch (err) {

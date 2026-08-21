@@ -29,6 +29,8 @@
 
 Workers can claim up to their configured concurrency, but every claim also locks the queue row while checking `concurrency_limit`. The worker pool's PostgreSQL pool has a maximum of 10 connections; setting worker concurrency higher than the pool does not create more database capacity and can cause claim/execution queries to queue under load.
 
+Each claimed job carries a unique lease token and expiry. Heartbeats renew active leases. The reaper recovers only expired leases, and completion requires the current token, fencing an old worker after recovery.
+
 ## Data Flow: Job Lifecycle
 
 1. **Creation**: Client POSTs a job to `/api/v1/jobs`. Saved with status `queued` (or `scheduled` if `run_at` is future).

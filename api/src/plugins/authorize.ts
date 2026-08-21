@@ -47,6 +47,7 @@ const authorizePlugin: FastifyPluginAsync = async (fastify) => {
             }
             if (ROLE_RANK[role] < ROLE_RANK[minimumRole]) {
                 await reply.code(403).send({ error: { code: 'FORBIDDEN', message: 'Insufficient organization role' } });
+                return;
             }
         };
     });

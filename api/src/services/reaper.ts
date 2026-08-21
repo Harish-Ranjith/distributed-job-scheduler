@@ -13,8 +13,8 @@ let reaperInterval: NodeJS.Timeout | null = null;
 /**
  * Stale job reaper — runs every 30 seconds by default.
  *
- * Identifies workers whose last heartbeat is older than STALE_THRESHOLD_SECONDS,
- * requeues any jobs they had claimed or were running, and marks the workers offline.
+ * Recovers only claimed/running jobs whose execution lease has expired.
+ * Worker heartbeat staleness is used separately to mark workers offline.
  *
  * Uses a CTE to find and requeue atomically in one query to avoid a race where
  * a worker sends a heartbeat between our stale detection and our requeue.
@@ -37,13 +37,15 @@ async function reaperTick(log: FastifyBaseLogger): Promise<void> {
         SELECT j.id
         FROM jobs j
         WHERE j.status IN ('claimed', 'running')
-          AND j.worker_id IN (SELECT id FROM stale_workers)
+          AND j.lease_expires_at <= NOW()
       )
       UPDATE jobs
       SET
         status     = 'queued',
         run_at     = NOW(),
         worker_id  = NULL,
+        lease_token = NULL,
+        lease_expires_at = NULL,
         updated_at = NOW()
       FROM stale_jobs
       WHERE jobs.id = stale_jobs.id
