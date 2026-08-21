@@ -1,0 +1,31 @@
+# ─── Dependencies ────────────────────────────────────────────────────────────
+node_modules/
+dist/
+build/
+.turbo/
+
+# ─── Environment ─────────────────────────────────────────────────────────────
+.env
+.env.local
+.env.*.local
+
+# ─── TypeScript build artifacts ──────────────────────────────────────────────
+*.tsbuildinfo
+*.d.ts.map
+
+# ─── Logs ────────────────────────────────────────────────────────────────────
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ─── OS & Editor ─────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.vscode/settings.json
+.idea/
+
+# ─── Test coverage ───────────────────────────────────────────────────────────
+coverage/
+.nyc_output/
