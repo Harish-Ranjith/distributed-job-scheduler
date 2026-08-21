@@ -19,6 +19,7 @@
     "test": "vitest run --workspace vitest.workspace.ts",
     "test:watch": "vitest --workspace vitest.workspace.ts",
     "test:coverage": "vitest run --workspace vitest.workspace.ts --coverage",
+    "verify": "npm run typecheck && npm test && npm run build",
     "lint": "npm run lint --workspaces --if-present"
   },
   "devDependencies": {

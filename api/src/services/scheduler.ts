@@ -25,7 +25,12 @@ let schedulerInterval: NodeJS.Timeout | null = null;
  * inserts a new jobs row from the template, and advances next_run_at.
  */
 export function startScheduler(log: FastifyBaseLogger): void {
-  async function tick(): Promise<void> {
+  void runSchedulerTick(log);
+  schedulerInterval = setInterval(() => void runSchedulerTick(log), 30_000);
+  log.info('✓ Cron scheduler started (30s interval)');
+}
+
+export async function runSchedulerTick(log: FastifyBaseLogger): Promise<void> {
     try {
       while (true) {
         const client = await pool.connect();
@@ -83,11 +88,6 @@ export function startScheduler(log: FastifyBaseLogger): void {
     } catch (err) {
       log.error({ err }, 'Scheduler tick error');
     }
-  }
-
-  void tick();
-  schedulerInterval = setInterval(() => void tick(), 30_000);
-  log.info('✓ Cron scheduler started (30s interval)');
 }
 
 export function stopScheduler(): void {

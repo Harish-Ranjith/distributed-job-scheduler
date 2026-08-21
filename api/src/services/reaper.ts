@@ -19,7 +19,7 @@ let reaperInterval: NodeJS.Timeout | null = null;
  * Uses a CTE to find and requeue atomically in one query to avoid a race where
  * a worker sends a heartbeat between our stale detection and our requeue.
  */
-async function reaperTick(log: FastifyBaseLogger): Promise<void> {
+export async function runReaperTick(log: FastifyBaseLogger): Promise<void> {
   try {
     log.info('Running stale worker reaper tick');
     const { rows: requeuedJobs } = await pool.query<{ id: string; queue_id: string }>(`
@@ -74,8 +74,8 @@ async function reaperTick(log: FastifyBaseLogger): Promise<void> {
 }
 
 export function startReaper(log: FastifyBaseLogger): void {
-  void reaperTick(log);
-  reaperInterval = setInterval(() => void reaperTick(log), REAPER_INTERVAL_MS);
+  void runReaperTick(log);
+  reaperInterval = setInterval(() => void runReaperTick(log), REAPER_INTERVAL_MS);
   log.info(
     { stale_threshold_seconds: STALE_THRESHOLD_SECONDS, interval_ms: REAPER_INTERVAL_MS },
     '✓ Stale job reaper started'
