@@ -29,7 +29,7 @@ Authentication rate limits: registration and login are limited to 10 requests pe
 - `POST /queues/:id/pause` - Pause a queue (stops workers from claiming)
 - `POST /queues/:id/resume` - Resume a paused queue
 - `GET /queues/:id/stats` - Get queue health stats
-	The response includes `active` and `concurrency_limit` for current slot utilization.
+  The response includes `active` and `concurrency_limit` for current slot utilization.
 
 ## Jobs
 
