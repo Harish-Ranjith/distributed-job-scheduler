@@ -31,23 +31,23 @@ export function startScheduler(log: FastifyBaseLogger): void {
 }
 
 export async function runSchedulerTick(log: FastifyBaseLogger): Promise<void> {
-    try {
-      while (true) {
-        const client = await pool.connect();
-        try {
-          await client.query('BEGIN');
+  try {
+    while (true) {
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
 
-          const { rows } = await client.query<{
-            id: string;
-            queue_id: string;
-            cron_expression: string;
-            job_template: {
-              job_type: string;
-              payload: Record<string, unknown>;
-              priority?: number;
-              max_attempts?: number;
-            };
-          }>(`
+        const { rows } = await client.query<{
+          id: string;
+          queue_id: string;
+          cron_expression: string;
+          job_template: {
+            job_type: string;
+            payload: Record<string, unknown>;
+            priority?: number;
+            max_attempts?: number;
+          };
+        }>(`
             SELECT id, queue_id, cron_expression, job_template
             FROM scheduled_jobs
             WHERE is_active = TRUE AND next_run_at <= NOW()
@@ -56,38 +56,38 @@ export async function runSchedulerTick(log: FastifyBaseLogger): Promise<void> {
             FOR UPDATE SKIP LOCKED
           `);
 
-          const scheduledJob = rows[0];
-          if (!scheduledJob) {
-            await client.query('COMMIT');
-            return;
-          }
-
-          const { job_type, payload, priority = 0, max_attempts = 3 } = scheduledJob.job_template;
-
-          await client.query(
-            `INSERT INTO jobs (queue_id, job_type, payload, priority, max_attempts, cron_expression)
-             VALUES ($1, $2, $3, $4, $5, $6)`,
-            [scheduledJob.queue_id, job_type, JSON.stringify(payload), priority, max_attempts, scheduledJob.cron_expression]
-          );
-
-          const nextRun = computeNextRunAt(scheduledJob.cron_expression);
-          await client.query(
-            `UPDATE scheduled_jobs SET next_run_at = $1, last_run_at = NOW(), updated_at = NOW() WHERE id = $2`,
-            [nextRun, scheduledJob.id]
-          );
-
+        const scheduledJob = rows[0];
+        if (!scheduledJob) {
           await client.query('COMMIT');
-          log.info({ scheduled_job_id: scheduledJob.id, job_type, next_run_at: nextRun }, 'Cron job spawned');
-        } catch (err) {
-          await client.query('ROLLBACK');
-          log.error({ err }, 'Failed to spawn cron job');
-        } finally {
-          client.release();
+          return;
         }
+
+        const { job_type, payload, priority = 0, max_attempts = 3 } = scheduledJob.job_template;
+
+        await client.query(
+          `INSERT INTO jobs (queue_id, job_type, payload, priority, max_attempts, cron_expression)
+             VALUES ($1, $2, $3, $4, $5, $6)`,
+          [scheduledJob.queue_id, job_type, JSON.stringify(payload), priority, max_attempts, scheduledJob.cron_expression]
+        );
+
+        const nextRun = computeNextRunAt(scheduledJob.cron_expression);
+        await client.query(
+          `UPDATE scheduled_jobs SET next_run_at = $1, last_run_at = NOW(), updated_at = NOW() WHERE id = $2`,
+          [nextRun, scheduledJob.id]
+        );
+
+        await client.query('COMMIT');
+        log.info({ scheduled_job_id: scheduledJob.id, job_type, next_run_at: nextRun }, 'Cron job spawned');
+      } catch (err) {
+        await client.query('ROLLBACK');
+        log.error({ err }, 'Failed to spawn cron job');
+      } finally {
+        client.release();
       }
-    } catch (err) {
-      log.error({ err }, 'Scheduler tick error');
     }
+  } catch (err) {
+    log.error({ err }, 'Scheduler tick error');
+  }
 }
 
 export function stopScheduler(): void {

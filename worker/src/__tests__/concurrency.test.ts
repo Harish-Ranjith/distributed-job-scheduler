@@ -32,14 +32,14 @@ test('Concurrent claimJob calls do not claim the same job (SKIP LOCKED works)', 
   }
 
   // Fire 10 concurrent claim requests (simulating 10 workers)
-  const claimPromises = Array.from({ length: 10 }).map((_, i) => 
+  const claimPromises = Array.from({ length: 10 }).map((_, i) =>
     claimJob(testPool, queueId, uuidv4())
   );
 
   const results = await Promise.all(claimPromises);
-  
+
   const claimedJobs = results.filter(j => j !== null);
-  
+
   // We expect exactly 5 claims to succeed, and 5 to return null
   expect(claimedJobs.length).toBe(5);
 

@@ -155,19 +155,19 @@ export async function executeJob(
              SET status = 'queued', attempt_count = $1, run_at = NOW() + ($2 || ' milliseconds')::INTERVAL,
                worker_id = NULL, lease_token = NULL, lease_expires_at = NULL, updated_at = NOW()
              WHERE id = $3 AND worker_id = $4 AND lease_token = $5 AND lease_expires_at > NOW()`,
-            [attemptNumber, delayMs, job.id, workerId, leaseToken]
+          [attemptNumber, delayMs, job.id, workerId, leaseToken]
         );
-          if (retryResult.rowCount !== 1) throw new Error(`Lease lost while retrying job ${job.id}`);
+        if (retryResult.rowCount !== 1) throw new Error(`Lease lost while retrying job ${job.id}`);
         jobLog.info({ delayMs }, 'Job queued for retry');
       } else {
         // Max attempts reached -> DLQ
         const dlqResult = await client.query(
-            `UPDATE jobs SET status = 'dead_letter', attempt_count = $1, worker_id = NULL,
+          `UPDATE jobs SET status = 'dead_letter', attempt_count = $1, worker_id = NULL,
               lease_token = NULL, lease_expires_at = NULL, updated_at = NOW()
              WHERE id = $2 AND worker_id = $3 AND lease_token = $4 AND lease_expires_at > NOW()`,
-            [attemptNumber, job.id, workerId, leaseToken]
+          [attemptNumber, job.id, workerId, leaseToken]
         );
-          if (dlqResult.rowCount !== 1) throw new Error(`Lease lost while moving job ${job.id} to DLQ`);
+        if (dlqResult.rowCount !== 1) throw new Error(`Lease lost while moving job ${job.id} to DLQ`);
         await client.query(
           `INSERT INTO dead_letter_jobs (original_job_id, queue_id, job_type, payload, failure_reason, attempt_count, max_attempts)
            VALUES ($1, $2, $3, $4, $5, $6, $7)`,
